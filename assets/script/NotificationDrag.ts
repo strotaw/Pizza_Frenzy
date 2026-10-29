@@ -8,13 +8,17 @@ import {
     EventMouse,
     EventTouch,
     UITransform,
-    Collider2D,
+    BoxCollider2D,
+    Rect,
     Vec3,
     director,
 } from 'cc';
 
 import { FoodTruckDropPoint } from './FoodTruckDropPoint';
 import { OrderNotification } from './OrderNotification';
+import { HouseOrderSlot } from './HouseOrderSlot';
+import { ScoreManager } from './ScoreManager';
+import { OrderLeftManager } from './OrderLeftManager';
 
 const { ccclass, property } = _decorator;
 
@@ -26,35 +30,51 @@ export class NotificationDrag extends Component {
     private originalParent: Node | null = null;
     private originalPosition = new Vec3();
     private canvas: Node | null = null;
-    private collider: Collider2D | null = null;
+
+    private collider: BoxCollider2D | null = null;
     private orderNotification: OrderNotification | null = null;
 
     private dragging = false;
     private dragType: 'mouse' | 'touch' | null = null;
     private dragOffset = new Vec3();
 
+    private scoreManager: ScoreManager | null = null;
+    private orderLeftManager: OrderLeftManager | null = null;
+
     private static activeDrag: NotificationDrag | null = null;
 
     start() {
-        const scene = director.getScene();
-
-        if (!scene) {
-            this.log('Scene tidak ditemukan');
-            return;
-        }
-
         this.originalParent = this.node.parent;
         this.node.getPosition(this.originalPosition);
 
-        this.collider = this.node.getComponent(Collider2D);
+        this.collider = this.node.getComponent(BoxCollider2D);
         this.orderNotification =
             this.node.getComponent(OrderNotification);
 
-        this.canvas = this.findNode(scene, 'Canvas');
+        const scene = director.getScene();
+        this.canvas = scene ? this.findNode(scene, 'Canvas') : null;
+
+        this.scoreManager = scene
+            ? scene.getComponentInChildren(ScoreManager)
+            : null;
+
+        this.orderLeftManager = scene
+            ? scene.getComponentInChildren(OrderLeftManager)
+            : null;
+      
+        if (!this.scoreManager) {
+          console.error('[NotificationDrag] ScoreManager tidak ditemukan!');
+        }
 
         if (!this.collider) {
             console.error(
-                `[NotificationDrag:${this.node.name}] Collider2D tidak ditemukan!`
+                `[NotificationDrag:${this.node.name}] BoxCollider2D tidak ditemukan pada root prefab!`
+            );
+        }
+
+        if (!this.node.getComponent(UITransform)) {
+            console.error(
+                `[NotificationDrag:${this.node.name}] UITransform tidak ditemukan!`
             );
         }
 
@@ -64,11 +84,11 @@ export class NotificationDrag extends Component {
             );
         }
 
-        if (!this.node.getComponent(UITransform)) {
-            console.error(
-                `[NotificationDrag:${this.node.name}] UITransform tidak ditemukan!`
-            );
-        }
+        if (!this.canvas) {
+            console.error('[NotificationDrag] Canvas tidak ditemukan!');
+      }
+
+
 
         input.on(Input.EventType.MOUSE_DOWN, this.onMouseDown, this);
         input.on(Input.EventType.MOUSE_MOVE, this.onMouseMove, this);
@@ -80,8 +100,14 @@ export class NotificationDrag extends Component {
         input.on(Input.EventType.TOUCH_CANCEL, this.onTouchEnd, this);
 
         this.log(
-            `Notification ready: ${
+            `Ready. FoodType: ${
                 this.orderNotification?.getFoodType() ?? 'UNKNOWN'
+            }`
+        );
+
+        this.log(
+            `BoxCollider2D: ${!!this.collider}, UITransform: ${
+                !!this.node.getComponent(UITransform)
             }`
         );
     }
@@ -166,7 +192,7 @@ export class NotificationDrag extends Component {
         y: number
     ) {
         if (!this.collider?.isValid) {
-            this.log('DRAG FAILED: Collider2D missing');
+            this.log('DRAG FAILED: BoxCollider2D missing');
             return;
         }
 
@@ -177,10 +203,7 @@ export class NotificationDrag extends Component {
 
         if (!this.canvas?.isValid) {
             const scene = director.getScene();
-
-            this.canvas = scene
-                ? this.findNode(scene, 'Canvas')
-                : null;
+            this.canvas = scene ? this.findNode(scene, 'Canvas') : null;
         }
 
         if (!this.canvas) {
@@ -188,14 +211,14 @@ export class NotificationDrag extends Component {
             return;
         }
 
-        const transform = this.canvas.getComponent(UITransform);
+        const canvasTransform = this.canvas.getComponent(UITransform);
 
-        if (!transform) {
+        if (!canvasTransform) {
             this.log('DRAG FAILED: Canvas UITransform missing');
             return;
         }
 
-        const pointer = transform.convertToNodeSpaceAR(
+        const pointer = canvasTransform.convertToNodeSpaceAR(
             new Vec3(x, y, 0)
         );
 
@@ -203,7 +226,6 @@ export class NotificationDrag extends Component {
         this.dragging = true;
         this.dragType = type;
 
-        // Pertahankan posisi dunia saat parent berubah.
         this.node.setParent(this.canvas, true);
 
         this.dragOffset.set(
@@ -222,7 +244,6 @@ export class NotificationDrag extends Component {
         if (NotificationDrag.activeDrag !== this) return;
 
         const p = event.getUILocation();
-
         this.moveTo(p.x, p.y);
     }
 
@@ -231,7 +252,6 @@ export class NotificationDrag extends Component {
         if (NotificationDrag.activeDrag !== this) return;
 
         const p = event.getUILocation();
-
         this.moveTo(p.x, p.y);
     }
 
@@ -266,6 +286,83 @@ export class NotificationDrag extends Component {
         this.finishDrag();
     }
 
+    private getColliderWorldBounds(
+        collider: BoxCollider2D
+    ): Rect | null {
+        const node = collider.node;
+        const transform = node.getComponent(UITransform);
+
+        if (!transform || !collider.isValid) {
+            return null;
+        }
+
+        const halfWidth = collider.size.width / 2;
+        const halfHeight = collider.size.height / 2;
+
+        const offsetX = collider.offset.x;
+        const offsetY = collider.offset.y;
+
+        const corners = [
+            new Vec3(offsetX - halfWidth, offsetY - halfHeight, 0),
+            new Vec3(offsetX + halfWidth, offsetY - halfHeight, 0),
+            new Vec3(offsetX - halfWidth, offsetY + halfHeight, 0),
+            new Vec3(offsetX + halfWidth, offsetY + halfHeight, 0),
+        ];
+
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+
+        for (const corner of corners) {
+            const world = transform.convertToWorldSpaceAR(corner);
+
+            minX = Math.min(minX, world.x);
+            minY = Math.min(minY, world.y);
+            maxX = Math.max(maxX, world.x);
+            maxY = Math.max(maxY, world.y);
+        }
+
+        return new Rect(minX, minY, maxX - minX, maxY - minY);
+    }
+
+    // Cari slot asal meskipun Notification sedang berada di Canvas.
+    private findSourceSlot(): HouseOrderSlot | null {
+        let current = this.originalParent;
+
+        while (current) {
+            const slot = current.getComponent(HouseOrderSlot);
+
+            if (slot) {
+                return slot;
+            }
+
+            current = current.parent;
+        }
+
+        return null;
+    }
+
+    // Selesaikan pesanan dan biarkan slot mengatur cooldown.
+    private completeSourceOrder(): boolean {
+        const slot = this.findSourceSlot();
+
+        if (!slot) {
+            this.log('SOURCE SLOT NOT FOUND');
+            return false;
+        }
+
+        const completed = slot.completeOrder(this.node);
+
+        if (!completed) {
+            this.log('SOURCE SLOT: Notification reference mismatch');
+            return false;
+        }
+
+        this.log(`SOURCE ORDER COMPLETED: ${slot.node.name}`);
+        return true;
+    }
+
     private finishDrag() {
         if (!this.dragging) return;
 
@@ -275,76 +372,111 @@ export class NotificationDrag extends Component {
 
         const scene = director.getScene();
 
-        if (!scene) {
-            this.log('DROP FAILED: Scene missing');
+        if (!scene || !this.collider?.isValid) {
+            this.log('DROP FAILED: Scene or collider missing');
             this.resetPosition();
             return;
         }
 
-        // Ambil tipe makanan dari OrderNotification.
-        const notificationType =
-            this.orderNotification?.getFoodType();
+        const notificationType = this.orderNotification?.getFoodType();
 
         if (!notificationType) {
-            this.log('DROP FAILED: FoodType tidak valid');
+            this.log('DROP FAILED: FoodType invalid');
             this.resetPosition();
             return;
         }
 
-        const notificationCollider = this.collider;
+        const notificationBounds =
+            this.getColliderWorldBounds(this.collider);
 
-        if (!notificationCollider?.isValid) {
-            this.log('DROP FAILED: Notification Collider2D invalid');
+        if (!notificationBounds) {
+            this.log('DROP FAILED: Cannot calculate Notification bounds');
             this.resetPosition();
             return;
         }
 
-        const notificationBounds = notificationCollider.worldAABB;
+        this.log(
+            `NOTIFICATION BOUNDS: x=${notificationBounds.x.toFixed(1)}, ` +
+            `y=${notificationBounds.y.toFixed(1)}, ` +
+            `w=${notificationBounds.width.toFixed(1)}, ` +
+            `h=${notificationBounds.height.toFixed(1)}`
+        );
 
-        const trucks =
-            scene.getComponentsInChildren(FoodTruckDropPoint);
+        const trucks = scene.getComponentsInChildren(FoodTruckDropPoint);
+
+        this.log(`FoodTruck found: ${trucks.length}`);
 
         for (const truck of trucks) {
             const truckCollider = truck.getCollider();
 
-            if (!truckCollider?.isValid) continue;
-
-            const truckBounds = truckCollider.worldAABB;
-
-            // Cek overlap collider notification dengan FoodTruck.
-            if (!notificationBounds.intersects(truckBounds)) {
+            if (!truckCollider) {
+                this.log(`${truck.node.name}: BoxCollider2D missing`);
                 continue;
             }
 
-            // Cek tipe makanan dari OrderNotification.
+            const truckBounds = truck.getWorldBounds();
+
+            if (!truckBounds) {
+                this.log(`${truck.node.name}: Cannot calculate bounds`);
+                continue;
+            }
+
+            const overlaps = notificationBounds.intersects(truckBounds);
+
+            this.log(
+                `${truck.node.name} bounds: ` +
+                `x=${truckBounds.x.toFixed(1)}, ` +
+                `y=${truckBounds.y.toFixed(1)}, ` +
+                `w=${truckBounds.width.toFixed(1)}, ` +
+                `h=${truckBounds.height.toFixed(1)}`
+            );
+
+            this.log(`COLLISION ${truck.node.name}: ${overlaps}`);
+
+            if (!overlaps) continue;
+
             const correct = truck.checkAnswer(notificationType);
 
             if (correct) {
-                truck.acceptNotification(this.node);
-                
-                return;
+                console.log('benar');
+                this.scoreManager?.addCorrectScore();
+                truck.acceptNotification();
+            } else {
+                console.log('salah');
+                this.scoreManager?.addWrongScore();
             }
 
+            // Setelah checkAnswer() dan proses benar/salah:
+            this.orderLeftManager?.completeOrder();
             
+            // Benar maupun salah: selesaikan pesanan dari slot asal.
+            // completeOrder() akan menghancurkan Notification.
+            if (!this.completeSourceOrder()) {
+                this.node.destroy();
+            }
 
-            this.resetPosition();
             return;
         }
 
-
+        // Tidak menyentuh FoodTruck: notif tetap menunggu jawaban.
+        this.log('DROP FAILED: No FoodTruck overlap');
         this.resetPosition();
     }
 
     private resetPosition() {
-        if (this.originalParent?.isValid) {
-            this.node.setParent(this.originalParent, true);
-            this.node.setPosition(this.originalPosition);
+        if (!this.originalParent?.isValid || !this.node.isValid) {
+            return;
         }
 
+        this.node.setParent(this.originalParent, true);
+        this.node.setPosition(this.originalPosition);
+
+        this.log('Notification returned to original position');
     }
 
     private log(message: string) {
         if (this.enableDebug) {
+            console.log(`[NotificationDrag:${this.node.name}] ${message}`);
         }
     }
 }

@@ -1,3 +1,4 @@
+
 import {
     _decorator,
     Component,
@@ -47,8 +48,13 @@ export class HouseOrderSlot extends Component {
             OrderNotification
         );
 
+        // Tetap kunci slot selama notif belum dijawab.
         if (order?.isAnswered) {
             this.notification = null;
+            this.cooldownRemaining = Math.max(
+                this.cooldownRemaining,
+                this.cooldownDuration
+            );
         }
     }
 
@@ -64,16 +70,15 @@ export class HouseOrderSlot extends Component {
     assignNotification(notification: Node): boolean {
         this.validateNotification();
 
-        // Cegah spawn kedua pada rumah sama.
+        // Tolak notif baru jika slot masih sibuk.
         if (
             this.notification !== null ||
             this.cooldownRemaining > 0
         ) {
-            notification.destroy();
             return false;
         }
 
-        // Simpan referensi sebelum memasang node.
+        // Kunci slot sebelum memasang notif.
         this.notification = notification;
 
         notification.setParent(this.node);
@@ -84,23 +89,30 @@ export class HouseOrderSlot extends Component {
         return true;
     }
 
-    completeOrder() {
+    completeOrder(notification?: Node): boolean {
         const current = this.notification;
 
-        // Kosongkan referensi agar slot tidak terkunci.
+        // Pastikan yang diselesaikan notif milik slot ini.
+        if (!current || (notification && current !== notification)) {
+            return false;
+        }
+
+        // Lepas slot dan mulai cooldown.
         this.notification = null;
         this.cooldownRemaining = this.cooldownDuration;
 
-        if (current && isValid(current)) {
+        if (isValid(current)) {
             const order = current.getComponent(
                 OrderNotification
             );
 
-            if (order) {
+            if (order && !order.isAnswered) {
                 order.markAnswered();
             }
 
             current.destroy();
         }
+
+        return true;
     }
 }

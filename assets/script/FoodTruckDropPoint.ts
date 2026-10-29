@@ -2,7 +2,10 @@
 import {
     _decorator,
     Component,
-    Collider2D,
+    BoxCollider2D,
+    UITransform,
+    Rect,
+    Vec3,
 } from 'cc';
 
 const { ccclass, property } = _decorator;
@@ -19,36 +22,79 @@ export class FoodTruckDropPoint extends Component {
     @property
     enableDebug = true;
 
-    private collider: Collider2D | null = null;
+    private collider: BoxCollider2D | null = null;
+    private uiTransform: UITransform | null = null;
 
     start() {
-        this.collider = this.getComponent(Collider2D);
+        this.collider = this.getComponent(BoxCollider2D);
+        this.uiTransform = this.getComponent(UITransform);
 
         if (!this.collider) {
             console.error(
-                `[FoodTruck:${this.node.name}] Collider2D tidak ditemukan!`
+                `[FoodTruck:${this.node.name}] BoxCollider2D tidak ditemukan pada root prefab!`
             );
-            return;
+        }
+
+        if (!this.uiTransform) {
+            console.error(
+                `[FoodTruck:${this.node.name}] UITransform tidak ditemukan!`
+            );
         }
 
         this.log(`Ready. Food type: ${this.foodType}`);
     }
 
-    public getCollider(): Collider2D | null {
+    public getCollider(): BoxCollider2D | null {
         return this.collider?.isValid ? this.collider : null;
+    }
+
+    public getWorldBounds(): Rect | null {
+        const collider = this.getCollider();
+        const transform = this.node.getComponent(UITransform);
+
+        if (!collider || !transform) {
+            return null;
+        }
+
+        // Ambil batas collider berdasarkan ukuran dan offset aktual.
+        const halfWidth = collider.size.width / 2;
+        const halfHeight = collider.size.height / 2;
+
+        const offsetX = collider.offset.x;
+        const offsetY = collider.offset.y;
+
+        const corners = [
+            new Vec3(offsetX - halfWidth, offsetY - halfHeight, 0),
+            new Vec3(offsetX + halfWidth, offsetY - halfHeight, 0),
+            new Vec3(offsetX - halfWidth, offsetY + halfHeight, 0),
+            new Vec3(offsetX + halfWidth, offsetY + halfHeight, 0),
+        ];
+
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+
+        for (const corner of corners) {
+            const world = transform.convertToWorldSpaceAR(corner);
+
+            minX = Math.min(minX, world.x);
+            minY = Math.min(minY, world.y);
+            maxX = Math.max(maxX, world.x);
+            maxY = Math.max(maxY, world.y);
+        }
+
+        return new Rect(minX, minY, maxX - minX, maxY - minY);
     }
 
     public checkAnswer(notificationType: FoodType): boolean {
         const correct = notificationType === this.foodType;
 
-        if (correct) {
-            this.log(`BENAR! ${notificationType} cocok.`);
-        } else {
-            this.log(
-                `SALAH! Notification: ${notificationType}, ` +
-                `FoodTruck: ${this.foodType}.`
-            );
-        }
+        this.log(
+            correct
+                ? `BENAR! ${notificationType} cocok.`
+                : `SALAH! Notification: ${notificationType}, FoodTruck: ${this.foodType}.`
+        );
 
         return correct;
     }
@@ -59,9 +105,7 @@ export class FoodTruckDropPoint extends Component {
 
     private log(message: string) {
         if (this.enableDebug) {
-            console.log(
-                `[FoodTruck:${this.node.name}] ${message}`
-            );
+            console.log(`[FoodTruck:${this.node.name}] ${message}`);
         }
     }
 }

@@ -6,9 +6,11 @@ import {
     instantiate,
     UITransform,
     Vec3,
+    director,
 } from 'cc';
 
 import { HouseOrderSlot } from './HouseOrderSlot';
+import { OrderLeftManager } from './OrderLeftManager';
 
 const { ccclass, property } = _decorator;
 
@@ -21,9 +23,41 @@ export class HouseNotificationSpawner extends Component {
     @property
     spawnInterval = 5;
 
+    @property
+    totalOrders = 19;
+
     private timer = 0;
+    private spawnedOrders = 0;
+    private orderLeftManager: OrderLeftManager | null = null;
+
+    start() {
+        const scene = director.getScene();
+
+        this.orderLeftManager = scene
+            ? scene.getComponentInChildren(OrderLeftManager)
+            : null;
+
+        if (!this.orderLeftManager) {
+            console.error(
+                '[HouseNotificationSpawner] OrderLeftManager tidak ditemukan!'
+            );
+            return;
+        }
+
+        this.totalOrders = Math.max(
+            0,
+            Math.floor(this.totalOrders)
+        );
+
+        this.orderLeftManager.initialize(this.totalOrders);
+    }
 
     update(dt: number) {
+        // Semua order sudah dibuat.
+        if (this.spawnedOrders >= this.totalOrders) {
+            return;
+        }
+
         this.timer += dt;
 
         if (this.timer < this.spawnInterval) {
@@ -35,8 +69,14 @@ export class HouseNotificationSpawner extends Component {
     }
 
     private spawnNotification() {
+        if (this.spawnedOrders >= this.totalOrders) {
+            return;
+        }
+
         if (!this.notificationPrefab) {
-            console.error('Notification Prefab belum dipasang!');
+            console.error(
+                'Notification Prefab belum dipasang!'
+            );
             return;
         }
 
@@ -62,10 +102,18 @@ export class HouseNotificationSpawner extends Component {
             this.notificationPrefab
         );
 
-        // Pasang notification pada slot rumah terpilih.
-        selectedSlot.assignNotification(notification);
+        const assigned = selectedSlot.assignNotification(
+            notification
+        );
 
-        // Samakan posisi berdasarkan koordinat dunia.
+        if (!assigned) {
+            notification.destroy();
+            return;
+        }
+
+        // Hitung hanya notification yang berhasil dipasang.
+        this.spawnedOrders++;
+
         const slotTransform = selectedSlot.node.getComponent(
             UITransform
         );
@@ -79,12 +127,14 @@ export class HouseNotificationSpawner extends Component {
                 slotTransform.convertToWorldSpaceAR(Vec3.ZERO);
 
             const parent = notification.parent;
-
-            const parentTransform = parent?.getComponent(UITransform);
+            const parentTransform =
+                parent?.getComponent(UITransform);
 
             if (parentTransform) {
                 const localPosition =
-                    parentTransform.convertToNodeSpaceAR(worldPosition);
+                    parentTransform.convertToNodeSpaceAR(
+                        worldPosition
+                    );
 
                 notification.setPosition(
                     new Vec3(
@@ -95,5 +145,9 @@ export class HouseNotificationSpawner extends Component {
                 );
             }
         }
+
+        console.log(
+            `Orders spawned: ${this.spawnedOrders}/${this.totalOrders}`
+        );
     }
 }
